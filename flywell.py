@@ -288,9 +288,9 @@ def register_images(input_dir: str, output_dir: str, mask: bool = True, output_r
 
             if mask:
                 rr, cc = disk((cropped.shape[0] // 2, cropped.shape[1] // 2), out_radius)
-                mask = np.ones_like(cropped, dtype=bool)
-                mask[rr, cc] = False
-                cropped[mask] = 0
+                mask_to_crop = np.ones_like(cropped, dtype=bool)
+                mask_to_crop[rr, cc] = False
+                cropped[mask_to_crop] = 0
 
             # Resize
             if output_size:
