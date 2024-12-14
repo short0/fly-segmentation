@@ -1,7 +1,3 @@
-"""Inference on a folder containing an image sequence."""
-import sys
-sys.path.append('..')
-
 import torch
 import argparse
 import os
@@ -35,65 +31,50 @@ import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 
 
-def get_args_parser():
-    parser = argparse.ArgumentParser()
+def inference(arch='segformer_b0', in_dir='inference_input', out_dir='inference_output', models_dir='models',
+              context_window=1, image_size=512, freeze_backbone=False, generate_heatmap=False,
+              generate_grayscale=False, generate_overlaid=True, window_size=4, relative_threshold=0.4):
+    # Get the experiment name
+    experiment_name = f'{arch}_context_window_{context_window}_{"frozen" if freeze_backbone else "finetuned"}'
 
-    # Model parameters
-    parser.add_argument('--arch', default='segformer_b0', type=str,
-        choices=['deeplabv3_resnet50', 'deeplabv3_resnet101', 'deeplabv3_mobilenet_v3_large',
-                 'segformer_b0', 'segformer_b1', 'segformer_b2', 'segformer_b3', 'segformer_b4', 'segformer_b5'],
-        help='Name of architecture to use.')
+    # Create output directories
+    os.makedirs(out_dir, exist_ok=True)
 
-    # Misc
-    parser.add_argument('--input-dir', default='inference_input', type=str, help='Path to images')
-    parser.add_argument('--output-dir', default='inference_output', type=str, help='Path to overlaid images')
-    parser.add_argument('--models-dir', default='models', type=str, help='Path to models')
-    parser.add_argument('--context-window', default=1, type=int, help='x images before and x images after are taken as context window'
-                                                                    '0 means training without context window')
-    parser.add_argument('--image-size', default=512, type=int, help='Size of images.')
-    parser.add_argument('--freeze-backbone', action=argparse.BooleanOptionalAction, default=False,
-        help='Whether to load weights from model trained with frozen or finetuned backbone.')
-    parser.add_argument('--generate-heatmap', action=argparse.BooleanOptionalAction, default=False,
-        help='Whether to generate heatmap.')
-    parser.add_argument('--generate-grayscale', action=argparse.BooleanOptionalAction, default=False,
-        help='Whether to generate heatmap.')
-    parser.add_argument('--generate-overlaid', action=argparse.BooleanOptionalAction, default=True,
-        help='Whether to generate heatmap.')
-    
-    # Postprocessing
-    parser.add_argument('--window-size', default=4, type=int, help='Window size when calculating rolling average.')
-    parser.add_argument('--relative-threshold', default=0.4, type=float, help='Relative threshold to detect outliers.')
-
-    return parser
-
-
-def inference(args):
     # ============ inference settings ... ============
     print('============ inference settings ... ============')
-    for arg_name in vars(args):
-        print(f'{arg_name}: {getattr(args, arg_name)}')   
+    print(f"Running inference with model: {arch}")
+    print(f"Input directory: {in_dir}")
+    print(f"Output directory: {out_dir}")
+    print(f"Context window: {context_window}")
+    print(f"Image size: {image_size}")
+    print(f"Freeze backbone: {freeze_backbone}")
+    print(f"Generate heatmap: {generate_heatmap}")
+    print(f"Generate grayscale: {generate_grayscale}")
+    print(f"Generate overlaid: {generate_overlaid}")
+    print(f"Window size (for postprocessing): {window_size}")
+    print(f"Relative threshold (for postprocessing): {relative_threshold}")
 
     # ============ preparing model ... ============
     print('============ preparing model ... ============')
-    if 'deeplabv3' in args.arch:
-        backbone = args.arch.split('_', maxsplit=1)[1]
+    if 'deeplabv3' in arch:
+        backbone = arch.split('_', maxsplit=1)[1]
         model = prepare_deeplabv3_model(num_classes=NUM_CLASSES,
                                         backbone=backbone,
                                         pretrained=False,
                                         freeze_backbone=False,
-                                        context_window=args.context_window)
-    elif 'segformer' in args.arch:
+                                        context_window=context_window)
+    elif 'segformer' in arch:
         model = prepare_segformer_model(num_classes=NUM_CLASSES,
-                                        pretrained_model=args.arch,
+                                        pretrained_model=arch,
                                         pretrained=False,
                                         freeze_encoder=False,
-                                        context_window=args.context_window)
+                                        context_window=context_window)
     else:
-        raise ValueError(f'{args.arch} architecture not implemented')
+        raise ValueError(f'{arch} architecture not implemented')
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    ckpt = torch.load(os.path.join(args.models_dir, experiment_name, 'model-latest.pth'), map_location=device)
+    ckpt = torch.load(os.path.join(models_dir, experiment_name, 'model-latest.pth'), map_location=device)
     model.load_state_dict(ckpt)
 
     model.to(device)
@@ -101,8 +82,8 @@ def inference(args):
     
     # ============ preparing inputs ... ============
     print('============ preparing inputs ... ============')
-    base_input_dir = args.input_dir
-    base_output_dir = args.output_dir
+    base_input_dir = in_dir
+    base_output_dir = out_dir
 
     input_dirs = [e.name for e in os.scandir(base_input_dir) if e.is_dir()]
     input_dirs.sort()
@@ -117,7 +98,7 @@ def inference(args):
         output_dir = os.path.join(base_output_dir, experiment_name, input_dir_basename)
 
         os.makedirs(output_dir, exist_ok=True)
-        if args.generate_heatmap:
+        if generate_heatmap:
             heatmap_dir = os.path.join(output_dir, 'heatmaps')
             os.makedirs(heatmap_dir, exist_ok=True)
 
@@ -146,16 +127,16 @@ def inference(args):
             # ============ preparing an image sequence ... ===========
             transforms = get_transforms()
 
-            input_tensor = get_image_sequence(input_dir, image_number, filenames_dict, transforms, image_size=args.image_size, context_window=args.context_window)
+            input_tensor = get_image_sequence(input_dir, image_number, filenames_dict, transforms, image_size=image_size, context_window=context_window)
             input_batch = input_tensor.unsqueeze(0) # create a mini-batch as expected by the model
 
             input_batch = input_batch.to(device)
 
             # ============ getting predictions ... ============
             with torch.no_grad():
-                if 'deeplabv3' in args.arch:
+                if 'deeplabv3' in arch:
                     output = model.forward(input_batch)['out']
-                elif 'segformer' in args.arch:
+                elif 'segformer' in arch:
                     output = model.forward(input_batch)
             output_prediction = output.argmax(1).squeeze()  # output has size of shape '1 c h w', doing argmax at the c (classes) dimension, then squeeze to get 'h w')
             
@@ -171,7 +152,7 @@ def inference(args):
             csv_file.flush()
 
             # ============ writing output ... ============
-            write_output(output_prediction, output_dir, os.path.splitext(filename)[0], scale_info=None, write_grayscale=args.generate_grayscale, write_rgb=False)
+            write_output(output_prediction, output_dir, os.path.splitext(filename)[0], scale_info=None, write_grayscale=generate_grayscale, write_rgb=False)
 
             # ============ overlaying output ... ============
             input_image = load_image(os.path.join(input_dir, filename))
@@ -179,12 +160,12 @@ def inference(args):
             overlaid_image = overlay_mask(input_image, output_prediction, CLASS_LIST, CLASS_COLOUR_MAP, alpha=0.9)
 
             # Write the overlaid image to disk
-            if args.generate_overlaid:
+            if generate_overlaid:
                 os.makedirs(os.path.join(output_dir, 'overlaid_predictions'), exist_ok=True)
                 write_image(os.path.join(output_dir, 'overlaid_predictions', f'overlaid-{os.path.splitext(filename)[0]}.png'), overlaid_image, overwrite=True)
 
             # ============ generating heatmap ... ============
-            if args.generate_heatmap:
+            if generate_heatmap:
 
                 # Take the softmax of the reconstructed prediction (gives softmax heatmap)
                 # softmax_heatmap = torch.softmax(
@@ -215,14 +196,12 @@ def inference(args):
                     write_image(os.path.join(heatmap_dir, f'{title}-{os.path.splitext(filename)[0]}.png'), data, overwrite=True)
         
         # Postprocess the csv file and create a plot
-        plot_sizes_distances(csv_path, input_dir_basename, output_dir, time_of_stoppage_csv_file, time_of_stoppage_csv_writer, window_size=args.window_size, relative_threshold=args.relative_threshold)
+        plot_sizes_distances(csv_path, input_dir_basename, output_dir, time_of_stoppage_csv_file, time_of_stoppage_csv_writer, window_size=window_size, relative_threshold=relative_threshold)
 
 
-def get_image_sequence(images_path, image_number, filenames_dict, transforms, image_size=512, context_window=1):
+def get_image_sequence(images_path, image_number, filenames_dict, transforms, image_size=512, context_window=1, train_with_deltas=True):
     order_number = image_number
     order_number_list = [i for i in range(order_number-context_window, order_number+context_window+1)]
-    
-    train_with_deltas = True
 
     if not train_with_deltas:
         images = []
@@ -264,7 +243,7 @@ def get_image_sequence(images_path, image_number, filenames_dict, transforms, im
         augmented_diffs = [A.ReplayCompose.replay(data['replay'], image=diff, mask=diff)['mask'].permute(2, 0, 1) for diff in diffs]
         images = augmented_diffs.copy()
         # Insert the augmented main image into the middle
-        images.insert(args.context_window, data['image'])
+        images.insert(context_window, data['image'])
 
         image_sequence = torch.cat(images, dim=0)  # shape of ((n x c) x h x w)
         
@@ -412,21 +391,21 @@ def plot_sizes_distances(csv_file_path, flywell_id, output_dir, time_of_stoppage
     # Highlight points with significant changes
     # plt.scatter(image_numbers.iloc[significant_change_indices], sizes.iloc[significant_change_indices], color='red', label='Potential outlier')
 
-    # try:
-    #     # Define the power function
-    #     def exponential_func(x, a, b):
-    #         return a * np.exp(b * x)
+    try:
+        # Define the exponetial function
+        def exponential_func(x, a, b):
+            return a * np.exp(b * x)
         
-    #     # Fit the power function to the data
-    #     params, covariance = curve_fit(exponential_func, image_numbers, sizes)
+        # Fit the power function to the data
+        params, covariance = curve_fit(exponential_func, image_numbers, sizes)
 
-    #     # Extract parameters
-    #     a, b = params
+        # Extract parameters
+        a, b = params
 
-    #     # Plot the fitting curve
-    #     plt.plot(image_numbers, exponential_func(image_numbers, a, b), label=f"Fitted Curve: $y={a:.4f}e^{{{b:.4f}x}}$", color='red')
-    # except:
-    #     pass
+        # Plot the fitting curve
+        plt.plot(image_numbers, exponential_func(image_numbers, a, b), label=f"Fitted Curve: $y={a:.4f}e^{{{b:.4f}x}}$", color='red')
+    except:
+        pass
     
     # Adding titles and labels
     plt.title(f'{flywell_id}: Size over time')
@@ -474,16 +453,3 @@ def get_val_transforms():
         ToTensorV2(),
     ])
     return transforms
-
-
-if __name__ == '__main__':
-    parser = get_args_parser()
-    args = parser.parse_args()
-
-    # Get the experiment name
-    experiment_name = f'{args.arch}_context_window_{args.context_window}_{"frozen" if args.freeze_backbone else "finetuned"}'
-
-    # Create output directories
-    os.makedirs(args.output_dir, exist_ok=True)
-    
-    inference(args)
