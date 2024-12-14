@@ -191,7 +191,11 @@ def register_images(input_dir: str, output_dir: str, mask: bool = True, output_r
         input_dir = os.path.join(base_input_dir, input_dir_basename)
         output_dir = os.path.join(base_output_dir, input_dir_basename)
 
-        os.makedirs(output_dir, exist_ok=True)
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+        else:
+            print(f'{output_dir} exists. Skipping...')
+            continue
 
         filenames = []
         for filename in os.listdir(input_dir):
