@@ -17,48 +17,6 @@ from tqdm import tqdm
 import cv2
 
 
-def cli_options(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument('--input-dir', default='data', type=str, help='Path to images')
-    parser.add_argument('--output-dir', default='inference_input', type=str, help='Path to overlaid images')
-
-    # Output configuration
-    parser.add_argument('--mask', action=argparse.BooleanOptionalAction, default=True,
-                        help='Whether to mask the output images by setting pixels which are not '
-                             'within the well to black.')
-    parser.add_argument('--output-radius', type=int, default=None,
-                        help='The side length of output images will be twice this value. '
-                             'By default, this will be set to the outer radius.')
-    parser.add_argument('--output-size', type=int, default=None,
-                        help='Override the --output-radius.'
-                             'The output images will be resized to have the size length of this value.')
-
-    # Registration algorithm configuration
-    parser.add_argument('--inner-radius', type=int, default=1280,
-                        help='The inner radius of the rim of the well, in pixels.')
-    parser.add_argument('--outer-radius', type=int, default=1440,
-                        help='The outer radius of the rim of the well, in pixels.')
-    parser.add_argument('--flywell-shift-dir', type=str,
-                        choices=['u', 'ur', 'r', 'dr', 'd', 'dl', 'l', 'ul'],
-                        help='The direction the flywell is shifted in relative to the image. Use '
-                             'this if the flywell is not well-centred in the frame, and/or '
-                             'partially out of frame.', default='')
-    parser.add_argument('--max-shift', type=int, default=64,
-                        help='The maximum amount of shift expected between two subsequent '
-                             'images, in pixels. '
-                             'Setting this value too low will interfere with registration. '
-                             'Setting this value too high is safe, but will slow things down.')
-    parser.add_argument('--n-angles', type=int, default=27,
-                        help='The number of points to sample around each circle when measuring '
-                             'symmetry')
-    parser.add_argument('--downscale-factor', type=int, default=8,
-                        help='The resize factor to use when detecting the rim. '
-                             'A larger value will result in faster registration.')
-
-    return parser.parse_args(argv)
-
-
 def angles_to_vectors(angles: np.ndarray):
     """Converts angles (in radians) to unit vectors (of the form (y, x)).
     """
@@ -161,11 +119,70 @@ def find_centre_of_symmetry(
     return (best_x, best_y), best_cost
 
 
-def main(argv: list[str]):
-    opts = cli_options(argv)
+def register_images(input_dir: str, output_dir: str, mask: bool = True, output_radius: int = None, output_size: int = None, 
+                   inner_radius: int = 1230, outer_radius: int = 1380, flywell_shift_dir: str = '', max_shift: int = 64, 
+                   n_angles: int = 27, downscale_factor: int = 8):
+    """
+    Registers images by applying alignment, masking, and resizing operations based on the provided parameters.
 
-    base_input_dir = opts.input_dir
-    base_output_dir = opts.output_dir
+    Parameters:
+    -----------
+    input_dir : str
+        Path to the directory containing input images to be registered.
+        
+    output_dir : str
+        Path to the directory where the registered images will be saved.
+
+    mask : bool, optional, default=True
+        Whether to apply a mask to the output images, setting pixels outside the "well" to black.
+
+    output_radius : int, optional, default=None
+        Specifies the radius for output images. The side length of the output images will be twice this value. 
+        If not provided, it defaults to the outer radius.
+
+    output_size : int, optional, default=None
+        Overrides `output_radius`. The output images will be resized to have a side length equal to this value.
+
+    inner_radius : int, optional, default=1230
+        The inner radius of the "rim" of the well, in pixels.
+
+    outer_radius : int, optional, default=1380
+        The outer radius of the "rim" of the well, in pixels.
+
+    flywell_shift_dir : str, optional, default=''
+        Specifies the direction of the flywell's shift in the image frame. Useful when the flywell is not 
+        centered or partially out of frame. Allowed values:
+        - 'u': up
+        - 'ur': up-right
+        - 'r': right
+        - 'dr': down-right
+        - 'd': down
+        - 'dl': down-left
+        - 'l': left
+        - 'ul': up-left
+        - '': no shift (default)
+
+    max_shift : int, optional, default=64
+        The maximum expected shift between two consecutive images, in pixels. 
+        Smaller values increase accuracy but may interfere with registration if the shift is larger.
+        Larger values are safer but may slow down processing.
+
+    n_angles : int, optional, default=27
+        The number of angular sampling points around each circle when measuring symmetry. 
+        Higher values may improve accuracy but increase computation time.
+
+    downscale_factor : int, optional, default=8
+        The downscale factor applied when detecting the rim. Larger values speed up processing 
+        but may reduce accuracy.
+
+    Returns:
+    --------
+    None
+        Processes and saves registered images in the specified output directory.
+    """
+
+    base_input_dir = input_dir
+    base_output_dir = output_dir
 
     input_dirs = [e.name for e in os.scandir(base_input_dir) if e.is_dir()]
     input_dirs.sort()
@@ -184,10 +201,10 @@ def main(argv: list[str]):
             filenames.append((int(m.groups()[0]), filename))
         filenames.sort()
 
-        r0 = opts.inner_radius
-        r1 = opts.outer_radius
+        r0 = inner_radius
+        r1 = outer_radius
 
-        downscale_factor = opts.downscale_factor
+        downscale_factor = downscale_factor
 
         cy = None
         cx = None
@@ -210,21 +227,21 @@ def main(argv: list[str]):
             # Set up the r1 divisors to use when identifying the area to analyse in.
             # These are expanded if any shift occurs (default = downscale factor)
             # Double the divisors if we say the flywell is shifted in that direction
-            x_min_div = downscale_factor * 2 if 'l' in opts.flywell_shift_dir else downscale_factor
-            y_min_div = downscale_factor * 2 if 'u' in opts.flywell_shift_dir else downscale_factor
-            x_max_div = downscale_factor * 2 if 'r' in opts.flywell_shift_dir else downscale_factor
-            y_max_div = downscale_factor * 2 if 'd' in opts.flywell_shift_dir else downscale_factor
+            x_min_div = downscale_factor * 2 if 'l' in flywell_shift_dir else downscale_factor
+            y_min_div = downscale_factor * 2 if 'u' in flywell_shift_dir else downscale_factor
+            x_max_div = downscale_factor * 2 if 'r' in flywell_shift_dir else downscale_factor
+            y_max_div = downscale_factor * 2 if 'd' in flywell_shift_dir else downscale_factor
 
             if first_image:
                 cy = scaled_image.shape[0] // 2
                 cx = scaled_image.shape[1] // 2
                 margin = np.inf
             else:
-                margin = opts.max_shift // downscale_factor
+                margin = max_shift // downscale_factor
 
             (best_x, best_y), best_cost = find_centre_of_symmetry(
                 image=scaled_image,
-                n_angles=opts.n_angles,
+                n_angles=n_angles,
                 r0=r0 // downscale_factor,
                 r1=r1 // downscale_factor,
                 x_min=max(cx - margin, r1 // x_min_div),
@@ -232,7 +249,7 @@ def main(argv: list[str]):
                 y_min=max(cy - margin, r1 // y_min_div),
                 y_max=min(cy + margin, scaled_image.shape[0] - r1 // y_max_div),
                 r_step=2,
-                shift_dir=opts.flywell_shift_dir,
+                shift_dir=flywell_shift_dir,
             )
 
             if best_x - cx >= 0.9 * margin or best_y - cy >= 0.9 * margin:
@@ -244,9 +261,9 @@ def main(argv: list[str]):
             best_x = round(best_x * downscale_factor)
             best_y = round(best_y * downscale_factor)
 
-            out_radius = opts.output_radius
+            out_radius = output_radius
             if out_radius is None:
-                out_radius = opts.outer_radius
+                out_radius = outer_radius
 
             # Assign data in this way to handle partially out-of-frame flywells
             num_channels = None if image_rgb.ndim == 2 else image_rgb.shape[2]
@@ -269,15 +286,15 @@ def main(argv: list[str]):
             # Place the flywell crop within the cropped image
             cropped[0+y1_off:height-y2_off, 0+x1_off: width-x2_off] = image_rgb[rgb_y1:rgb_y2, rgb_x1:rgb_x2]
 
-            if opts.mask:
+            if mask:
                 rr, cc = disk((cropped.shape[0] // 2, cropped.shape[1] // 2), out_radius)
                 mask = np.ones_like(cropped, dtype=bool)
                 mask[rr, cc] = False
                 cropped[mask] = 0
 
             # Resize
-            if opts.output_size:
-                cropped = cv2.resize(cropped, (opts.output_size, opts.output_size), interpolation=cv2.INTER_AREA)
+            if output_size:
+                cropped = cv2.resize(cropped, (output_size, output_size), interpolation=cv2.INTER_AREA)
 
             # Save output image
             basename = os.path.splitext(filename)[0]
@@ -288,7 +305,3 @@ def main(argv: list[str]):
             csv_file.flush()
 
         csv_file.close()
-
-
-if __name__ == '__main__':
-    main(sys.argv[1:])
