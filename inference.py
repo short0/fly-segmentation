@@ -33,7 +33,7 @@ from scipy.optimize import curve_fit
 
 def inference(arch='segformer_b0', in_dir='inference_input', out_dir='inference_output', models_dir='models',
               context_window=1, image_size=512, freeze_backbone=False, generate_heatmap=False,
-              generate_grayscale=False, generate_overlaid=True, window_size=4, relative_threshold=0.4):
+              generate_grayscale=False, generate_overlaid=True, window_size=4, relative_threshold=0.4, fit_exponential_curve=True):
     # Get the experiment name
     experiment_name = f'{arch}_context_window_{context_window}_{"frozen" if freeze_backbone else "finetuned"}'
 
@@ -48,6 +48,7 @@ def inference(arch='segformer_b0', in_dir='inference_input', out_dir='inference_
     print(f"Running inference with model: {arch}")
     print(f"Context window: {context_window}")
     print(f"Freeze backbone: {freeze_backbone}")
+    print(f"Fit exponential curves for sizes: {fit_exponential_curve}")
     print(f"Generate overlaid: {generate_overlaid}")
     print(f"Generate heatmap: {generate_heatmap}")
     print(f"Generate grayscale: {generate_grayscale}")
@@ -202,7 +203,7 @@ def inference(arch='segformer_b0', in_dir='inference_input', out_dir='inference_
                     write_image(os.path.join(heatmap_dir, f'{title}-{os.path.splitext(filename)[0]}.png'), data, overwrite=True)
         
         # Postprocess the csv file and create a plot
-        plot_sizes_distances(csv_path, input_dir_basename, output_dir, time_of_stoppage_csv_file, time_of_stoppage_csv_writer, window_size=window_size, relative_threshold=relative_threshold)
+        plot_sizes_distances(csv_path, input_dir_basename, output_dir, time_of_stoppage_csv_file, time_of_stoppage_csv_writer, window_size=window_size, relative_threshold=relative_threshold, fit_exponential_curve=fit_exponential_curve)
 
 
 def get_image_sequence(images_path, image_number, filenames_dict, transforms, image_size=512, context_window=1, train_with_deltas=True):
@@ -346,7 +347,7 @@ def longest_not_moving_period(is_moving, n_frames_threshold=5):
     return start_index if max_length > 0 else None
 
 
-def plot_sizes_distances(csv_file_path, flywell_id, output_dir, time_of_stoppage_csv_file, time_of_stoppage_csv_writer, window_size=4, relative_threshold=0.4, distance_threshold=50, n_frames_threshold=5):
+def plot_sizes_distances(csv_file_path, flywell_id, output_dir, time_of_stoppage_csv_file, time_of_stoppage_csv_writer, window_size=4, relative_threshold=0.4, distance_threshold=50, n_frames_threshold=5, fit_exponential_curve=True):
     # Load the CSV file
     data = pd.read_csv(csv_file_path)
     data = data[data['size'] != -1].reset_index(drop=True)
@@ -397,21 +398,22 @@ def plot_sizes_distances(csv_file_path, flywell_id, output_dir, time_of_stoppage
     # Highlight points with significant changes
     # plt.scatter(image_numbers.iloc[significant_change_indices], sizes.iloc[significant_change_indices], color='red', label='Potential outlier')
 
-    try:
-        # Define the exponetial function
-        def exponential_func(x, a, b):
-            return a * np.exp(b * x)
-        
-        # Fit the power function to the data
-        params, covariance = curve_fit(exponential_func, image_numbers, sizes)
+    if fit_exponential_curve:
+        try:
+            # Define the exponetial function
+            def exponential_func(x, a, b):
+                return a * np.exp(b * x)
+            
+            # Fit the power function to the data
+            params, covariance = curve_fit(exponential_func, image_numbers, sizes)
 
-        # Extract parameters
-        a, b = params
+            # Extract parameters
+            a, b = params
 
-        # Plot the fitting curve
-        plt.plot(image_numbers, exponential_func(image_numbers, a, b), label=f"Fitted Curve: $y={a:.4f}e^{{{b:.4f}x}}$", color='red')
-    except:
-        pass
+            # Plot the fitting curve
+            plt.plot(image_numbers, exponential_func(image_numbers, a, b), label=f"Fitted Curve: $y={a:.4f}e^{{{b:.4f}x}}$", color='red')
+        except:
+            pass
     
     # Adding titles and labels
     plt.title(f'{flywell_id}: Size over time')
