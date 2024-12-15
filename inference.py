@@ -42,15 +42,16 @@ def inference(arch='segformer_b0', in_dir='inference_input', out_dir='inference_
 
     # ============ inference settings ... ============
     print('============ inference settings ... ============')
-    print(f"Running inference with model: {arch}")
     print(f"Input directory: {in_dir}")
     print(f"Output directory: {out_dir}")
+    print(f"Models directory: {models_dir}")
+    print(f"Running inference with model: {arch}")
     print(f"Context window: {context_window}")
-    print(f"Image size: {image_size}")
     print(f"Freeze backbone: {freeze_backbone}")
+    print(f"Generate overlaid: {generate_overlaid}")
     print(f"Generate heatmap: {generate_heatmap}")
     print(f"Generate grayscale: {generate_grayscale}")
-    print(f"Generate overlaid: {generate_overlaid}")
+    print(f"Image size: {image_size}")
     print(f"Window size (for postprocessing): {window_size}")
     print(f"Relative threshold (for postprocessing): {relative_threshold}")
 
@@ -97,7 +98,12 @@ def inference(arch='segformer_b0', in_dir='inference_input', out_dir='inference_
         input_dir = os.path.join(base_input_dir, input_dir_basename)
         output_dir = os.path.join(base_output_dir, experiment_name, input_dir_basename)
 
-        os.makedirs(output_dir, exist_ok=True)
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+        else:
+            print(f'{output_dir} exists. Skipping...')
+            continue
+        
         if generate_heatmap:
             heatmap_dir = os.path.join(output_dir, 'heatmaps')
             os.makedirs(heatmap_dir, exist_ok=True)
